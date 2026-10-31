@@ -117,9 +117,11 @@ def _display(value, default: str = "N/A") -> str:
     return text or default
 
 HIT_LOG_GROUP_ID = 5359329585
+EXTRA_CHARGED_GROUP_ID = -1003972147303
 BOT = "https://t.me/Try_Low"
 
 BUTTON_LOCK_SECONDS = 30
+MAX_AUTO_RECHECK_ROUNDS = 2
 
 # ── Build marker — bump this when patches are applied so you can verify ──
 # Confirmed applied: proxy-normalize, sites-cache, bin-cache+inflight,
@@ -554,6 +556,7 @@ RETRY_ERRORS = [
     'missing receiptId',
     'Error:',
     "INVALID_PAYMENT_METHOD",
+    "AMOUNT_TOO_SMALL",
     "Site not supported",
     "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
     "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED",
@@ -592,11 +595,15 @@ RETRY_ERRORS = [
     'CAPTCHA_METADATA_MISSING',
     'DELIVERY_ADDRESS2_REQUIRED',
     'PAYMENTS_TERMS_CHANGED',
-
     'PATMENTS_METHOD',
     'TOKENIZATION_ERROR',
-
     'SITE_ERROR',
+    'PROPOSAL_ERROR',
+    'SUBMIT_ERROR',
+    'PROCESSING_ERROR',
+    'GENERIC_ERROR',
+    'FRAUD_SUSPECTED',
+    'INVALID_PURCHASE_TYPE',
 ]
 
 def _is_retryable_api_error(message: str, http_status: Optional[int]) -> bool:
@@ -937,8 +944,53 @@ def generate_result_file(session: dict, result_type: str, user_obj, plan_name: s
 
     return file_buffer, filename, total_count
 
-# 🎬 Charged-hit celebration reactions (all verified working)
-CHARGED_REACTIONS = ["celebrate", "cheers", "yay", "brofist", "clap", "proud", "yeet"]
+# 🎬 Charged-hit celebration reactions — 35 verified otakugifs reactions
+# Rotated in shuffled order; no reaction repeats until full cycle ends.
+CHARGED_REACTIONS = [
+    # ── Celebration ──
+    "celebrate", "cheers", "yay", "brofist", "clap", "proud", "yeet",
+    "highfive", "thumbsup", "salute", "nod", "yes",
+    # ── Happy ──
+    "happy", "smile", "laugh", "wink", "cool", "smug", "dance",
+    # ── Love ──
+    "kiss", "love", "hug", "cuddle", "handhold", "blush", "shy",
+    # ── Cute ──
+    "pat", "tickle", "nuzzle", "sip", "nom", "poke",
+    # ── Misc ──
+    "wave", "spin", "shoot",
+]
+# 35 reactions total — shuffled each cycle
+
+_CHARGED_REACTION_QUEUE = deque()
+_LAST_CHARGED_REACTION  = ""
+
+def _next_charged_reaction() -> str:
+    """Return next unique reaction. Shuffle-reload after cycle exhausts.
+    Also guards against the last-of-cycle == first-of-next-cycle repeat."""
+    global _CHARGED_REACTION_QUEUE, _LAST_CHARGED_REACTION
+
+    if not _CHARGED_REACTION_QUEUE:
+        lst = list(CHARGED_REACTIONS)
+        random.shuffle(lst)
+        _CHARGED_REACTION_QUEUE = deque(lst)
+
+    # Adjacent-repeat guard (only across cycle boundary)
+    if (
+        _LAST_CHARGED_REACTION
+        and len(_CHARGED_REACTION_QUEUE) > 1
+        and _CHARGED_REACTION_QUEUE[0] == _LAST_CHARGED_REACTION
+    ):
+        lst = list(_CHARGED_REACTION_QUEUE)
+        for i in range(1, len(lst)):
+            if lst[i] != _LAST_CHARGED_REACTION:
+                lst[0], lst[i] = lst[i], lst[0]
+                break
+        _CHARGED_REACTION_QUEUE = deque(lst)
+
+    reaction = _CHARGED_REACTION_QUEUE.popleft()
+    _LAST_CHARGED_REACTION = reaction
+    return reaction
+
 
 # 🛡️ Real giphy fallbacks — never 403
 FALLBACK_GIFS = [
@@ -950,26 +1002,51 @@ FALLBACK_GIFS = [
 ]
 
 
+# 🚦 Rate-limiter — paces hit-log sends so rapid charged hits never flood Telegram
+_HIT_LOG_MIN_INTERVAL = 1.0              # seconds between hit-log sends
+_LAST_HIT_LOG_TS      = 0.0
+_HIT_LOG_RATE_LOCK    = None             # lazy-initialised asyncio.Lock
+
+
+async def _hit_log_rate_gate():
+    """Serialize + pace hit-log sends to avoid 429 flood-wait."""
+    global _LAST_HIT_LOG_TS, _HIT_LOG_RATE_LOCK
+    if _HIT_LOG_RATE_LOCK is None:
+        _HIT_LOG_RATE_LOCK = asyncio.Lock()
+    async with _HIT_LOG_RATE_LOCK:
+        wait = _HIT_LOG_MIN_INTERVAL - (time.time() - _LAST_HIT_LOG_TS)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _LAST_HIT_LOG_TS = time.time()
+
+
 async def _charged_gif() -> str:
-    """100% success — try otaku API 2x, then hard fallback."""
+    """Fetch next unique reaction GIF. One retry with fresh reaction, then hard fallback."""
     _timeout = aiohttp.ClientTimeout(total=8, connect=4)
     session  = _get_msh_http_session()
 
-    for _ in range(2):
-        r = random.choice(CHARGED_REACTIONS)
+    reaction = _next_charged_reaction()
+
+    for attempt in range(2):
         try:
             async with session.get(
-                f"https://api.otakugifs.xyz/gif?reaction={r}", timeout=_timeout
+                f"https://api.otakugifs.xyz/gif?reaction={reaction}", timeout=_timeout
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json(content_type=None)
                     url  = data.get("url")
                     if url and url.startswith("http"):
                         return url
+                # Missing URL → try a fresh reaction on attempt 2
+                if attempt == 0:
+                    reaction = _next_charged_reaction()
         except Exception:
+            if attempt == 0:
+                reaction = _next_charged_reaction()
             continue
 
     return random.choice(FALLBACK_GIFS)
+
 
 async def send_hit_log_to_group(
     bot: Bot, response_msg, user_obj, plan_name,
@@ -998,6 +1075,9 @@ async def send_hit_log_to_group(
             icon_custom_emoji_id="5444856076954520455",
         )]
     ])
+
+    # 🚦 Pace sends — multiple charged hits never flood Telegram
+    await _hit_log_rate_gate()
 
     gif_url = await _charged_gif()
 
@@ -1172,6 +1252,7 @@ async def send_charged_msg_to_user(
     group_caption = caption.replace(user_link, protect(user_link))
     try:
         await bot.send_animation(
+            chat_id=EXTRA_CHARGED_GROUP_ID,
             animation=gif_url,
             caption=group_caption,
             parse_mode="HTML",
@@ -1321,55 +1402,35 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
     sites_list = get_sites()
     if not sites_list:
         logging.error(f"[MSH] sites.txt is empty — no sites available for session {session_id}")
-        session['errors'] += 1
-        session['error_cards'].append({
-            'time_take':  0.0,
-            'card':       cc_formatted,
-            'response':   "sites.txt is empty",
-            'status':     "ERROR",
-            'bin_info':   {},
-            'price':      "0.00",
-            'currency':   "USD",
-            'gateway':    "Shopify",
-            'timestamp':  datetime.datetime('now').isoformat(),
-            'proxy_used': 'None',
-        })
-        session['checked'] += 1
-        if session['checked'] % session.get('progress_interval', 25) == 0 or session['checked'] == session['total']:
-            await update_progress_message(bot, session_id)
+        is_rechecking = session.get('is_rechecking', False)
+        recheck_round = session.get('recheck_round', 0)
+        max_rounds    = session.get('max_recheck_rounds', MAX_AUTO_RECHECK_ROUNDS)
+        if is_rechecking and recheck_round >= max_rounds:
+            session['checked'] += 1
+        else:
+            session.setdefault('recheck_queue', []).append((cc_formatted, cc_num))
         return
 
     proxy_manager = session.get('proxy_manager')
     if not proxy_manager:
         logging.error(f"[MSH] No proxy manager found for session {session_id}")
-        session['errors'] += 1
-        session['error_cards'].append({
-            'time_take':  0.0,
-            'card':       cc_formatted,
-            'response':   "No proxy manager",
-            'status':     "ERROR",
-            'bin_info':   {},
-            'price':      "0.00",
-            'currency':   "USD",
-            'gateway':    "Shopify",
-            'timestamp':  datetime.datetime('now').isoformat(),
-            'proxy_used': 'None',
-        })
-        session['checked'] += 1
-        if session['checked'] % session.get('progress_interval', 25) == 0 or session['checked'] == session['total']:
-            await update_progress_message(bot, session_id)
+        is_rechecking = session.get('is_rechecking', False)
+        recheck_round = session.get('recheck_round', 0)
+        max_rounds    = session.get('max_recheck_rounds', MAX_AUTO_RECHECK_ROUNDS)
+        if is_rechecking and recheck_round >= max_rounds:
+            session['checked'] += 1
+        else:
+            session.setdefault('recheck_queue', []).append((cc_formatted, cc_num))
         return
 
     DECLINED_RESPONSES = [
-        'CARD_DECLINED', 'PROCESSING_ERROR', 'GENERIC_ERROR',
-        'GENERIC_DECLINE', 'DO NOT HONOR', 'DO_NOT_HONOR',
-        'UNKNOWN_ERROR', 'Processing Error',
-        'PICK_UP_CARD', 'DECISION_RULE_BLOCK',
-        'FRAUD_SUSPECTED',
-        'INVALID_PURCHASE_TYPE', 'INVALID_PAYMENT_METHOD',
-        'TEST_MODE_LIVE_CARD', 'AMOUNT_TOO_SMALL',
-        'INCORRECT_NUMBER', 'EXPIRED_CARD', 'DS_REQUIRED', 'APPROVED',
-        'PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED',
+       'CARD_DECLINED',
+       'GENERIC_DECLINE', 'DO NOT HONOR', 'DO_NOT_HONOR',
+       'UNKNOWN_ERROR', 'Processing Error',
+       'PICK_UP_CARD', 'DECISION_RULE_BLOCK',
+       'TEST_MODE_LIVE_CARD',
+       'INCORRECT_NUMBER', 'EXPIRED_CARD', 'DS_REQUIRED', 'APPROVED',
+       'PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED',
     ]
 
     result_status         = "ERROR"
@@ -1380,7 +1441,7 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
     bin_data              = {}
     used_proxy            = None
 
-    MAX_RETRIES = 10
+    MAX_RETRIES = 6
     attempt     = 0
 
     parts = cc_formatted.split('|')
@@ -1408,22 +1469,13 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
 
         if not proxy_result or not proxy_result[0]:
             logging.error(f"[MSH] No proxies available for session {session_id}")
-            session['errors'] += 1
-            session['error_cards'].append({
-                'time_take':  0.0,
-                'card':       cc_formatted,
-                'response':   "No proxies available",
-                'status':     "ERROR",
-                'bin_info':   {},
-                'price':      "0.00",
-                'currency':   "USD",
-                'gateway':    "Shopify",
-                'timestamp':  datetime.datetime('now').isoformat(),
-                'proxy_used': 'None',
-            })
-            session['checked'] += 1
-            if session['checked'] % session.get('progress_interval', 25) == 0 or session['checked'] == session['total']:
-                await update_progress_message(bot, session_id)
+            is_rechecking = session.get('is_rechecking', False)
+            recheck_round = session.get('recheck_round', 0)
+            max_rounds    = session.get('max_recheck_rounds', MAX_AUTO_RECHECK_ROUNDS)
+            if is_rechecking and recheck_round >= max_rounds:
+                session['checked'] += 1
+            else:
+                session.setdefault('recheck_queue', []).append((cc_formatted, cc_num))
             return
 
         proxy, is_rotated = proxy_result
@@ -1478,7 +1530,7 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
                         response_msg  = f"Proxy Error: {message}"
                         break
                     else:
-                        await asyncio.sleep(0.2)
+                        await asyncio.sleep(0.05)
                         continue
 
                 elif _is_retryable_api_error(message, http_status):
@@ -1487,7 +1539,7 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
                             f"[MSH] Transient API error ({message[:60]}...) — "
                             f"retrying... ({attempt}/{MAX_RETRIES})"
                         )
-                        await asyncio.sleep(0.3)
+                        await asyncio.sleep(0.1)
                         continue
                     else:
                         result_status = "ERROR"
@@ -1501,7 +1553,7 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
                             f"[MSH] Site/Step error ({message[:60]}...) — "
                             f"retrying with different site... ({attempt}/{MAX_RETRIES})"
                         )
-                        await asyncio.sleep(0.1)
+                        await asyncio.sleep(0.03)
                         continue
                     else:
                         result_status = "ERROR"
@@ -1529,7 +1581,7 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
                 proxy_status_formatted = "Error 🔴"
                 break
             else:
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.05)
                 continue
 
     if is_session_stopped(session_id):
@@ -1538,8 +1590,6 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
     proxy_display = mask_proxy(used_proxy) if used_proxy else 'None'
     print(f"{cc_formatted} | {result_status} | {response_msg} | Proxy: {proxy_display}")
     logging.info(f"[MSH] {cc_formatted} | {result_status} | {response_msg} | Proxy: {proxy_display}")
-
-    session['checked'] += 1
 
     elapsed = time.time() - check_started
     card_result_data = {
@@ -1559,6 +1609,7 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
         return
 
     if result_status == "CHARGED":
+        session['checked'] += 1
         session['charged'] += 1
         session['charged_cards'].append(card_result_data)
 
@@ -1581,6 +1632,7 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
         )
 
     elif result_status == "APPROVED":
+        session['checked'] += 1
         session['approved'] += 1
         session['live_cards'].append(card_result_data)
 
@@ -1591,6 +1643,7 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
         )
 
     elif result_status == "DEAD":
+        session['checked'] += 1
         session['dead'] += 1
         session['dead_cards'].append(card_result_data)
 
@@ -1601,8 +1654,18 @@ async def process_single_card(session_id, cc_formatted, cc_num, user_id, bot, us
         )
 
     elif result_status == "ERROR":
-        session['errors'] += 1
-        session['error_cards'].append(card_result_data)
+        # ── SILENT AUTO-RECHECK ──
+        # Errors NEVER increment session['errors'], NEVER touch error_cards,
+        # and NEVER appear in the export file. Error text stays in logs only.
+        is_rechecking = session.get('is_rechecking', False)
+        recheck_round = session.get('recheck_round', 0)
+        max_rounds    = session.get('max_recheck_rounds', MAX_AUTO_RECHECK_ROUNDS)
+
+        if is_rechecking and recheck_round >= max_rounds:
+            session['checked'] += 1        # final drop — count as checked
+        else:
+            session.setdefault('recheck_queue', []).append((cc_formatted, cc_num))
+
         await asyncio.gather(
             asyncio.to_thread(update_user_stats, user_id, False),
             asyncio.to_thread(increment_lifetime_stats, user_id, 0, 0, 1),
@@ -1988,6 +2051,10 @@ async def process_mass_check_background(
         "bad_sites":       {},
         "bad_site_threshold": 5,
         "good_sites_cache":   None,
+        "recheck_queue":      [],
+        "is_rechecking":      False,
+        "recheck_round":      0,
+        "max_recheck_rounds": MAX_AUTO_RECHECK_ROUNDS,
         "progress_interval":  max(1, min(25, total_cards // 20)),
         "last_text":       "",
         "last_update_time": 0,
@@ -2017,7 +2084,7 @@ async def run_mass_checker(bot: Bot, session_id, cards, user_obj, plan_name):
     if not session:
         return
 
-    sem = asyncio.Semaphore(30)
+    sem = asyncio.Semaphore(150)
 
     async def worker(cc_formatted, cc_num):
         if is_session_stopped(session_id):
@@ -2037,19 +2104,20 @@ async def run_mass_checker(bot: Bot, session_id, cards, user_obj, plan_name):
                 if not is_session_stopped(session_id):
                     logging.error(f"Worker error for {cc_formatted}: {e}")
 
-    # Create tasks in bounded chunks — keeps peak Task-object memory flat
     CHUNK = 500
-    total_created = 0
+    total_created   = 0
     total_cancelled = 0
-    total_errors = 0
+    total_errors    = 0
+
+    # ── MAIN PASS ──
+    session['is_rechecking'] = False
+    session['recheck_round'] = 0
 
     for i in range(0, len(cards), CHUNK):
         if is_session_stopped(session_id):
-            print(f"🛑 [MSH] Stopped creating tasks — {total_created} created")
             break
         chunk = cards[i:i + CHUNK]
         chunk_tasks = [asyncio.create_task(worker(c, n)) for c, n in chunk]
-        # Replace (not extend!) so we hold at most one chunk's Task refs.
         session['tasks'] = chunk_tasks
         total_created += len(chunk_tasks)
 
@@ -2060,23 +2128,76 @@ async def run_mass_checker(bot: Bot, session_id, cards, user_obj, plan_name):
         if is_session_stopped(session_id):
             break
 
-    print(f"📋 [MSH] {total_created} tasks created")
-    logging.info(f"📋 [MSH] {total_created} tasks created")
+    print(f"📋 [MSH] Main pass — {total_created} tasks created")
+    logging.info(f"📋 [MSH] Main pass — {total_created} tasks created")
+
+    # ── AUTO-RECHECK ROUNDS (silent, credit-free) ──
+    max_rounds = session.get('max_recheck_rounds', MAX_AUTO_RECHECK_ROUNDS)
+    for round_num in range(1, max_rounds + 1):
+        if is_session_stopped(session_id):
+            break
+
+        session = MSH_SESSIONS.get(session_id)
+        if not session:
+            break
+
+        queue = list(session.get('recheck_queue', []))
+        if not queue:
+            break
+
+        session['recheck_queue'] = []
+        session['is_rechecking'] = True
+        session['recheck_round'] = round_num
+
+        logging.info(f"🔄 [MSH] Recheck round {round_num}/{max_rounds} — {len(queue)} cards")
+        print(f"🔄 [MSH] Recheck round {round_num}/{max_rounds} — {len(queue)} cards")
+
+        recheck_created = 0
+        for i in range(0, len(queue), CHUNK):
+            if is_session_stopped(session_id):
+                break
+            chunk = queue[i:i + CHUNK]
+            chunk_tasks = [asyncio.create_task(worker(c, n)) for c, n in chunk]
+            session['tasks'] = chunk_tasks
+            recheck_created += len(chunk_tasks)
+            await asyncio.gather(*chunk_tasks, return_exceptions=True)
+            if is_session_stopped(session_id):
+                break
+
+        print(f"📋 [MSH] Recheck round {round_num} — {recheck_created} tasks")
+        logging.info(f"📋 [MSH] Recheck round {round_num} — {recheck_created} tasks")
+
+        # Force progress refresh between rounds
+        session['last_text'] = ""
+        session['last_update_time'] = 0
+        await update_progress_message(bot, session_id)
+
+    # ── FINAL CLEANUP ──
+    session = MSH_SESSIONS.get(session_id)
+    if session:
+        session['is_rechecking'] = False
+
+        if session['status'] != "<b>Sᴛᴏᴘᴘᴇᴅ</b>":
+            remaining = session.get('recheck_queue', [])
+            if remaining:
+                session['checked'] += len(remaining)
+                logging.info(f"[MSH] Silently dropped {len(remaining)} unresolved cards")
+            session['recheck_queue'] = []
+            session['status'] = "<b>Sᴜᴍᴍᴀʀʏ</b>"
+        else:
+            session['recheck_queue'] = []
+
+        session['tasks'] = []
+
+    if session:
+        session['last_text'] = ""
+        session['last_update_time'] = 0
+    await update_progress_message(bot, session_id)
 
     if total_cancelled > 0:
         print(f"🛑 [MSH] {total_cancelled} tasks cancelled")
     if total_errors > 0:
         logging.error(f"[MSH] {total_errors} tasks failed with exceptions")
-
-    session = MSH_SESSIONS.get(session_id)
-    if session and session['status'] != "<b>Sᴛᴏᴘᴘᴇᴅ</b>":
-        session['status'] = "<b>Sᴜᴍᴍᴀʀʏ</b>"
-
-    await update_progress_message(bot, session_id)
-
-    # Free memory: drop completed task references
-    if session:
-        session['tasks'] = []
 
     print(f"✅ [MSH] Session {session_id} finished")
     logging.info(f"✅ [MSH] Session {session_id} finished")
