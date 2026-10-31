@@ -74,19 +74,19 @@ from split import (
 )
 
 
-BOT_TOKEN = "9076243583:AAHYaxMKukLL9dRFXkBAKszeR8771EK9bnE"
+BOT_TOKEN = "8924543407:AAG735Se0rtdcNCprkngZN-8sViTGmjy4uk"
 
 START_IMAGE_URL     = "https://ibb.co/nM7VhBZy"
 
-LOG_CHANNEL_ID      = 5359329585
-BOT_LINK            = "https://t.me/Try_Low"
-REQUIRED_CHANNEL_ID = -1003744006874
-REQUIRED_GROUP_ID   = -1003706505883
-REQUIRED_GROUP2_ID  = 5359329585
-CHANNEL_LINK        = "https://t.me/+gKR64Mqqdp41MTBk"
-GROUP_LINK          = "https://t.me/+qbfZLvrw5qgzMzVh"
-GROUP2_LINK         = "https://t.me/+YfwzO7RQWgM2YThl"
-OWNER_LINK = "https://t.me/Try_Low"
+LOG_CHANNEL_ID      = -1004337097449
+BOT_LINK            = "https://t.me/+XSF5plL6ZxI2NDcx"
+REQUIRED_CHANNEL_ID = -1004337097449
+REQUIRED_GROUP_ID   = -1004337097449
+REQUIRED_GROUP2_ID  = -1004337097449
+CHANNEL_LINK        = "https://t.me/+XSF5plL6ZxI2NDcx"
+GROUP_LINK          = "https://t.me/+XSF5plL6ZxI2NDcx"
+GROUP2_LINK         = "https://t.me/+XSF5plL6ZxI2NDcx"
+OWNER_LINK = "https://t.me/NotHimNaruto"
 JOIN_TEXT = (
     '<tg-emoji emoji-id="5445033158456145975">📲</tg-emoji> '
     '<b>𝗔𝗰𝗰𝗲𝘀𝘀 𝗥𝗲𝘀𝘁𝗿𝗶𝗰𝘁𝗲𝗱</b> '
