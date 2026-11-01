@@ -1,9 +1,8 @@
-import sqlite3
 import asyncio
 from typing import Callable, Dict, Any, Awaitable
 from aiogram import Router, types, BaseMiddleware
 from aiogram.filters import Command
-from database import DB_CONFIG
+from database import PooledConn
 
 
 ADMIN_IDS = {7963961151, 8880615460}
@@ -13,17 +12,13 @@ router = Router()
 
 def _ensure_banned_table():
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS banned_users (
-                user_id   INTEGER PRIMARY KEY,
-                banned_at TIMESTAMP DEFAULT datetime('now')
-            )
-        """)
-        conn.commit()
-        cur.close()
-        conn.close()
+        with PooledConn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS banned_users (
+                    user_id   INTEGER PRIMARY KEY,
+                    banned_at TIMESTAMP DEFAULT (datetime('now'))
+                )
+            """)
         print("[DB] banned_users table checked.")
     except Exception as e:
         print(f"[DB] Error creating banned_users table: {e}")
@@ -32,37 +27,25 @@ _ensure_banned_table()
 
 
 def _is_banned_sync(user_id: int) -> bool:
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT 1 FROM banned_users WHERE user_id = ?", (user_id,))
-    result = cur.fetchone()
-    cur.close()
-    conn.close()
-    return result is not None
+    with PooledConn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM banned_users WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return row is not None
 
 def _ban_user_sync(user_id: int):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO banned_users (user_id) VALUES (?) ON CONFLICT DO NOTHING",
-        (user_id,)
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
+    with PooledConn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO banned_users (user_id) VALUES (?)",
+            (user_id,)
+        )
 
 def _unban_user_sync(user_id: int) -> bool:
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "DELETE FROM banned_users WHERE user_id = ?",
-        (user_id,)
-    )
-    result = cur.fetchone()
-    conn.commit()
-    cur.close()
-    conn.close()
-    return result is not None
+    with PooledConn() as conn:
+        cur = conn.execute(
+            "DELETE FROM banned_users WHERE user_id = ?", (user_id,)
+        )
+        return cur.rowcount > 0
 
 
 @router.message(Command("ban"))

@@ -14,11 +14,50 @@ def is_owner_user(user_id) -> bool:
     try:    return int(user_id) in OWNER_IDS
     except: return False
 
+# ── row handling ────────────────────────────────────────────────────
+
+# Columns that hold timestamps. SQLite returns them as text, so we parse them
+# back into datetime objects here. Works for both new and old tables.
+_TS_COLS = {
+    "premium_expiry", "joined_at", "purchased_on", "expires_on",
+    "created_at", "paid_at", "claimed_at", "expires_at", "updated_at",
+    "banned_at", "added_at", "cooldown_until", "last_used",
+}
+
+
+def _to_dt(value):
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return value
+    return value
+
+
+class _Row(dict):
+    """Dict-style row that also supports integer indexing (row[0]) and .get()."""
+
+    def __init__(self, cols, vals):
+        super().__init__(zip(cols, vals))
+        self._vals = tuple(vals)
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._vals[key]
+        return super().__getitem__(key)
+
+
+def _row_factory(cursor, row):
+    cols = [d[0] for d in cursor.description]
+    vals = [_to_dt(v) if c in _TS_COLS else v for c, v in zip(cols, row)]
+    return _Row(cols, vals)
+
+
 # ── connection ──────────────────────────────────────────────────────
 
 def _conn():
     c = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
-    c.row_factory = sqlite3.Row
+    c.row_factory = _row_factory
     c.execute("PRAGMA journal_mode=WAL")
     c.execute("PRAGMA foreign_keys=ON")
     return c
@@ -128,7 +167,9 @@ def ensure_codes_table():
                 plan_name        TEXT,
                 duration_seconds INTEGER,
                 created_by       INTEGER,
-                expires_at       TEXT
+                expires_at       TEXT,
+                claimed_by       INTEGER,
+                claimed_at       TIMESTAMP
             )
         """)
 
@@ -137,12 +178,71 @@ def ensure_receipts_table():
         c.execute("""
             CREATE TABLE IF NOT EXISTS receipts (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                receipt_id   TEXT,
                 user_id      INTEGER,
                 plan         TEXT,
+                amount_paid  REAL,
                 purchased_on TEXT DEFAULT (datetime('now')),
+                expires_on   TIMESTAMP,
                 track_id     TEXT
             )
         """)
+
+def _column_names(table: str) -> set:
+    with PooledConn() as c:
+        return {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+
+def _add_column(table: str, name: str, decl: str) -> bool:
+    try:
+        with PooledConn() as c:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+        return True
+    except Exception:
+        return False
+
+def ensure_migrations():
+    """Bring tables created by older versions up to the columns sub.py and payments.py use."""
+    # receipts
+    existing = _column_names("receipts")
+    for name, decl in (
+        ("receipt_id",  "TEXT"),
+        ("amount_paid", "REAL"),
+        ("expires_on",  "TIMESTAMP"),
+    ):
+        if name not in existing:
+            _add_column("receipts", name, decl)
+    try:
+        with PooledConn() as c:
+            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_receipts_receipt_id ON receipts(receipt_id)")
+    except Exception as e:
+        logging.warning(f"[DB] receipt_id index: {e}")
+
+    # codes
+    existing = _column_names("codes")
+    claimed_just_added = False
+    for name, decl in (
+        ("claimed_by",       "INTEGER"),
+        ("claimed_at",       "TIMESTAMP"),
+        ("plan_name",        "TEXT"),
+        ("duration_seconds", "INTEGER"),
+        ("created_by",       "INTEGER"),
+        ("expires_at",       "TIMESTAMP"),
+    ):
+        if name not in existing:
+            if _add_column("codes", name, decl) and name == "claimed_by":
+                claimed_just_added = True
+    if claimed_just_added:
+        # Carry over codes the old schema marked as used
+        try:
+            with PooledConn() as c:
+                c.execute("""
+                    UPDATE codes
+                       SET claimed_by = used_by,
+                           claimed_at = datetime('now')
+                     WHERE used = 1 AND claimed_by IS NULL
+                """)
+        except Exception as e:
+            logging.warning(f"[DB] codes backfill: {e}")
 
 def create_global_proxy_table():
     with PooledConn() as c:
@@ -414,5 +514,6 @@ ensure_gate_table()
 ensure_codes_table()
 ensure_receipts_table()
 ensure_keys_columns()
+ensure_migrations()
 create_global_proxy_table()
 logging.info("[DB] SQLite ready → bot.db")

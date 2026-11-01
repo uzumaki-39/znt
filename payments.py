@@ -1,4 +1,4 @@
-ilib.request
+import urllib.request
 import urllib.parse
 import urllib.error
 import json
@@ -52,13 +52,17 @@ def init_payments_db():
                     paid_at     TIMESTAMP
                 )
             """)
-            cur.execute("ALTER TABLE payment_tracks ADD COLUMN address TEXT")
-            cur.execute("ALTER TABLE payment_tracks ADD COLUMN invoice_url TEXT")
-            cur.execute("ALTER TABLE payment_tracks ADD COLUMN order_id TEXT")
-            cur.execute("ALTER TABLE payment_tracks ADD COLUMN currency TEXT")
-            cur.execute("ALTER TABLE payment_tracks ADD COLUMN network TEXT")
-            cur.execute("ALTER TABLE payment_tracks ADD COLUMN paid_at TIMESTAMP")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_payment_tracks_user  ON payment_tracks(user_id)")
+            conn.commit()
+            for col_def in (
+                "address TEXT", "invoice_url TEXT", "order_id TEXT",
+                "currency TEXT", "network TEXT", "paid_at TIMESTAMP",
+            ):
+                try:
+                    cur.execute(f"ALTER TABLE payment_tracks ADD COLUMN {col_def}")
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_payment_tracks_user   ON payment_tracks(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_payment_tracks_status ON payment_tracks(status)")
             conn.commit()
     except Exception as e:
@@ -880,7 +884,7 @@ def register_payment(track_id: str, user_id: int, plan: str):
     active_payments[track_id] = {
         "user_id":    user_id,
         "plan":       plan,
-        "created_at": datetime.datetime('now'),
+                "created_at": datetime.now(),
         "status":     "Pending",
     }
 
@@ -1083,14 +1087,13 @@ def scan_recoverable_payments(limit: int = 50):
         from database import PooledConn
         with PooledConn() as conn:
             cur = conn.cursor()
-            cutoff = datetime.now() - timedelta(hours=24)
-cur.execute(
-    "SELECT track_id, user_id, plan, status FROM payment_tracks "
-    "WHERE status IN ('Pending','Expired') "
-    "AND created_at > ? "
-    "ORDER BY created_at DESC LIMIT ?",
-    (cutoff, limit),
-)
+            cur.execute(
+                "SELECT track_id, user_id, plan, status FROM payment_tracks "
+                "WHERE status IN ('Pending','Expired') "
+                "AND created_at > datetime('now', '-24 hours') "
+                "ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
             rows = [dict(r) for r in cur.fetchall()]
     except Exception as e:
         logging.error(f"[Pay] resume query failed: {e}")
