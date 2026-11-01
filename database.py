@@ -170,7 +170,7 @@ def create_user(user_id: int, username: str, first_name: str = None):
         c.execute("""
             INSERT OR IGNORE INTO users (user_id, username, first_name, credits, joined_at)
             VALUES (?,?,?,?,?)
-        """, (user_id, username, first_name, 150, datetime.datetime('now').isoformat()))
+        """, (user_id, username, first_name, 150, datetime.now().isoformat()))
 
 def set_first_name(user_id: int, first_name: str):
     name = str(first_name or "").strip()[:64]

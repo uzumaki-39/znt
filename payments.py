@@ -1,4 +1,4 @@
-import urllib.request
+ilib.request
 import urllib.parse
 import urllib.error
 import json
@@ -48,7 +48,7 @@ def init_payments_db():
                     invoice_url TEXT,
                     order_id    TEXT,
                     status      TEXT DEFAULT 'Pending',
-                    created_at  TIMESTAMP DEFAULT datetime('now'),
+                    created_at  TIMESTAMP DEFAULT (datetime('now')),
                     paid_at     TIMESTAMP
                 )
             """)
@@ -211,7 +211,7 @@ def create_payment(user_id: int, plan: str, retries: int = 3) -> Optional[Dict]:
         return None
 
     plan_info = PLANS[plan]
-    order_id  = f"CHKXWIZ_{user_id}_{plan}_{int(datetime.datetime('now').timestamp())}"
+    order_id  = f"CHKXWIZ_{user_id}_{plan}_{int(datetime.now().timestamp())}"
 
     params = {
         "source_currency": "USD",
@@ -474,21 +474,19 @@ def activate_plan(user_id: int, plan: str) -> bool:
     plan_info = PLANS[plan]
     try:
         from database import PooledConn
-        expiry = datetime.datetime('now') + timedelta(days=plan_info["days"])
-
+        expiry = datetime.now() + timedelta(days=plan_info["days"])
         with PooledConn() as conn:
             cur = conn.cursor()
 
             cur.execute("""
                 INSERT INTO users (user_id, username, first_name, credits, joined_at)
                 VALUES (?,?,?,?,?) ON CONFLICT (user_id) DO NOTHING
-            """, (user_id, "Unknown", "User", 0, datetime.datetime('now')))
-
+            """, (user_id, "Unknown", "User", 0, datetime.now()))
             cur.execute("SELECT premium_expiry FROM users WHERE user_id=?", (user_id,))
             row = cur.fetchone()
             if row and row.get("premium_expiry"):
                 current = row["premium_expiry"]
-                if current and datetime.datetime('now') < current:
+                if current and datetime.now() < current:
                     expiry = current + timedelta(days=plan_info["days"])
 
             cur.execute(
@@ -501,7 +499,7 @@ def activate_plan(user_id: int, plan: str) -> bool:
             )
 
             receipt_id   = generate_receipt_id()
-            purchased_on = datetime.datetime('now')
+            purchased_on = datetime.now()
             cur.execute(
                 "INSERT INTO receipts "
                 "(receipt_id,user_id,plan,amount_paid,purchased_on,expires_on) "
@@ -1024,7 +1022,7 @@ def track_payment_info(ref: str) -> Optional[Dict]:
             plan    = row.get("plan")
             if user_id and plan:
                 activate_plan(int(user_id), str(plan))
-                row["paid_at"] = datetime.datetime('now')
+                row["paid_at"] = datetime.now()
             status = "Paid"
 
     return {
@@ -1085,13 +1083,14 @@ def scan_recoverable_payments(limit: int = 50):
         from database import PooledConn
         with PooledConn() as conn:
             cur = conn.cursor()
-            cur.execute(
-                "SELECT track_id, user_id, plan, status FROM payment_tracks "
-                "WHERE status IN ('Pending','Expired') "
-                "AND created_at > datetime('now') - INTERVAL '24 hours' "
-                "ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            )
+            cutoff = datetime.now() - timedelta(hours=24)
+cur.execute(
+    "SELECT track_id, user_id, plan, status FROM payment_tracks "
+    "WHERE status IN ('Pending','Expired') "
+    "AND created_at > ? "
+    "ORDER BY created_at DESC LIMIT ?",
+    (cutoff, limit),
+)
             rows = [dict(r) for r in cur.fetchall()]
     except Exception as e:
         logging.error(f"[Pay] resume query failed: {e}")
@@ -1147,7 +1146,7 @@ def _init_state_db():
                 CREATE TABLE IF NOT EXISTS bot_state (
                     key        TEXT PRIMARY KEY,
                     value      TEXT NOT NULL,
-                    updated_at TIMESTAMP DEFAULT datetime('now')
+                    updated_at TIMESTAMP DEFAULT (datetime('now'))
                 )
             """)
             conn.commit()
@@ -1174,7 +1173,7 @@ def _parse_ts(value) -> Optional[datetime]:
 def _claim_downtime() -> Optional[timedelta]:
     """Read the previous heartbeat and stamp 'now' in the same breath.
     Returns the downtime (last run → this run), or None on first boot."""
-    now = datetime.datetime('now')
+    now = datetime.now()
     try:
         from database import PooledConn
         with PooledConn() as conn:
@@ -1205,7 +1204,7 @@ def _claim_downtime() -> Optional[timedelta]:
 
 
 def _write_last_seen(ts: Optional[datetime] = None):
-    ts = ts or datetime.datetime('now')
+    ts = ts or datetime.now()
     try:
         from database import PooledConn
         with PooledConn() as conn:
@@ -1305,7 +1304,7 @@ async def _maintenance_heartbeat():
     """Keep the last_seen clock fresh so downtime is measured accurately."""
     while True:
         try:
-            await asyncio.to_thread(_write_last_seen, datetime.datetime('now'))
+            await asyncio.to_thread(_write_last_seen, datetime.now())
         except Exception as e:
             logging.error(f"[Maint] heartbeat loop error: {e}")
         await asyncio.sleep(HEARTBEAT_INTERVAL)

@@ -41,7 +41,7 @@ def init_db():
             ("credits",        "INTEGER DEFAULT 0"),
             ("is_premium",     "INTEGER DEFAULT 0"),
             ("premium_expiry", "TIMESTAMP"),
-            ("joined_at",      "TIMESTAMP DEFAULT datetime('now')"),
+            ("joined_at",      "TIMESTAMP"),
         ]
         for col_name, col_type in columns:
             try:
@@ -325,7 +325,7 @@ def get_premium_status(user_id):
 
             if is_premium_flag == 1:
                 if expiry:
-                    if datetime.datetime('now') < expiry:
+                    if datetime.now() < expiry:
                         result = (True, expiry)
                     else:
                         cur.execute(
@@ -340,7 +340,7 @@ def get_premium_status(user_id):
                         (user_id,)
                     )
                     conn.commit()
-            elif expiry and datetime.datetime('now') > expiry:
+            elif expiry and datetime.now() > expiry:
                 cur.execute(
                     "UPDATE users SET premium_expiry = NULL, credits = 150 WHERE user_id = ?",
                     (user_id,)
@@ -387,9 +387,9 @@ def _resolve_user_id_sync(target_input):
 
 def _auth_db_sync(target_id, display_name, plan_name, days, credits, amount):
     """Grant a subscription plan. Returns receipt_id or raises on error."""
-    expiry_date  = datetime.datetime('now') + timedelta(days=days)
+    expiry_date  = datetime.now() + timedelta(days=days)
     receipt_id   = generate_receipt_id()
-    purchased_on = datetime.datetime('now')
+    purchased_on = datetime.now()
 
     with PooledConn() as conn:
         cur = conn.cursor()
@@ -397,7 +397,7 @@ def _auth_db_sync(target_id, display_name, plan_name, days, credits, amount):
             INSERT INTO users (user_id, username, first_name, credits, joined_at)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (user_id) DO NOTHING
-        """, (target_id, "Unknown", "User", 0, datetime.datetime('now')))
+        """, (target_id, "Unknown", "User", 0, datetime.now()))
         cur.execute(
             "UPDATE users SET first_name = ? WHERE user_id = ?",
             (display_name, target_id)
@@ -430,7 +430,7 @@ def _adcr_db_sync(target_id, display_name, add_credits):
             INSERT INTO users (user_id, username, first_name, credits, joined_at)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (user_id) DO NOTHING
-        """, (target_id, "Unknown", "User", 0, datetime.datetime('now')))
+        """, (target_id, "Unknown", "User", 0, datetime.now()))
         cur.execute(
             "UPDATE users SET credits = credits + ? WHERE user_id = ?",
             (add_credits, target_id)
@@ -463,7 +463,7 @@ def _rauth_db_sync(target_id):
         row = cur.fetchone()
 
     _premium_cache.pop(target_id, None)
-    return row
+    return dict(row) if row else None
 
 
 def _rc_db_sync(receipt_id):
@@ -476,7 +476,8 @@ def _rc_db_sync(receipt_id):
               JOIN users u ON r.user_id = u.user_id
              WHERE r.receipt_id = ?
         """, (receipt_id,))
-        return cur.fetchone()
+        row = cur.fetchone()
+        return dict(row) if row else None
 
 
 def _info_db_sync(user_id, username, first_name):
@@ -492,7 +493,7 @@ def _info_db_sync(user_id, username, first_name):
             cur.execute(
                 "INSERT INTO users (user_id, username, first_name, credits, joined_at) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (user_id, username, first_name, 0, datetime.datetime('now'))
+                (user_id, username, first_name, 0, datetime.now())
             )
             conn.commit()
             cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -511,17 +512,22 @@ def _info_db_sync(user_id, username, first_name):
 
 
 def _authall_db_sync():
-    """Return all currently active premium users."""
+    """Return all currently active premium users (SQLite-compatible)."""
     with PooledConn() as conn:
         cur = conn.cursor()
         cur.execute("""
-            SELECT DISTINCT ON (u.user_id)
-                u.user_id, u.username, r.receipt_id, r.purchased_on,
-                r.plan, u.premium_expiry, u.credits
+            SELECT u.user_id, u.username, r.receipt_id, r.purchased_on,
+                   r.plan, u.premium_expiry, u.credits
               FROM users u
               LEFT JOIN receipts r ON u.user_id = r.user_id
-             WHERE u.is_premium = 1 AND u.premium_expiry > datetime('now')
-             ORDER BY u.user_id, r.purchased_on DESC
+             WHERE u.is_premium = 1
+               AND u.premium_expiry > datetime('now')
+               AND COALESCE(r.purchased_on, '') = COALESCE((
+                       SELECT MAX(r2.purchased_on)
+                         FROM receipts r2
+                        WHERE r2.user_id = u.user_id
+                   ), '')
+             ORDER BY u.user_id
         """)
         return cur.fetchall()
 
@@ -576,6 +582,7 @@ def _claim_db_sync(user_id, code):
             row = cur.fetchone()
             if not row:
                 return "invalid", None
+            row = dict(row)
             if row['claimed_by'] is not None:
                 return "claimed", None
 
@@ -587,9 +594,9 @@ def _claim_db_sync(user_id, code):
                     return "premium", None
 
                 duration_seconds = row['duration_seconds']
-                expiry_date      = datetime.datetime('now') + timedelta(seconds=duration_seconds)
+                expiry_date      = datetime.now() + timedelta(seconds=duration_seconds)
                 receipt_id       = generate_receipt_id()
-                purchased_on     = datetime.datetime('now')
+                purchased_on     = datetime.now()
                 credits          = row['credits']
                 plan_name        = row['plan_name']
 
@@ -597,7 +604,7 @@ def _claim_db_sync(user_id, code):
                     INSERT INTO users (user_id, username, first_name, credits, joined_at)
                     VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT (user_id) DO NOTHING
-                """, (user_id, "Unknown", "User", 0, datetime.datetime('now')))
+                """, (user_id, "Unknown", "User", 0, datetime.now()))
 
                 cur.execute(
                     "UPDATE users SET is_premium = 1, premium_expiry = ? WHERE user_id = ?",
@@ -640,7 +647,7 @@ def _claim_db_sync(user_id, code):
 
             cur.execute(
                 "UPDATE codes SET claimed_by = ?, claimed_at = ? WHERE code = ?",
-                (user_id, datetime.datetime('now'), code)
+                (user_id, datetime.now(), code)
             )
             cur.execute(
                 "UPDATE users SET credits = credits + ? WHERE user_id = ?",
@@ -656,21 +663,22 @@ def _claim_db_sync(user_id, code):
 
 
 def _expire_premiums_sync():
-    """Find expired premium users, reset them, and return list for DM notifications."""
+    """Find expired premium users, reset them, and return list for DM notifications.
+    SQLite-compatible: no LATERAL, no ANY(). Uses correlated subquery + IN list."""
     expired = []
     with PooledConn() as conn:
         cur = conn.cursor()
         cur.execute("""
             SELECT u.user_id,
-                   COALESCE(r.plan, 'Premium') AS plan_name
+                   COALESCE(
+                       (SELECT plan
+                          FROM receipts
+                         WHERE user_id = u.user_id
+                         ORDER BY purchased_on DESC
+                         LIMIT 1),
+                       'Premium'
+                   ) AS plan_name
               FROM users u
-              LEFT JOIN LATERAL (
-                  SELECT plan
-                    FROM receipts
-                   WHERE user_id = u.user_id
-                   ORDER BY purchased_on DESC
-                   LIMIT 1
-              ) r ON TRUE
              WHERE u.is_premium = 1
                AND u.premium_expiry IS NOT NULL
                AND u.premium_expiry <= datetime('now')
@@ -679,13 +687,14 @@ def _expire_premiums_sync():
 
         if rows:
             user_ids = [r['user_id'] for r in rows]
-            cur.execute("""
+            placeholders = ",".join("?" * len(user_ids))
+            cur.execute(f"""
                 UPDATE users
                    SET is_premium     = 0,
                        premium_expiry = NULL,
                        credits        = 150
-                 WHERE user_id = ANY(?)
-            """, (user_ids,))
+                 WHERE user_id IN ({placeholders})
+            """, user_ids)
             conn.commit()
             for r in rows:
                 _premium_cache.pop(r['user_id'], None)
@@ -1153,7 +1162,7 @@ async def authall_command(message: types.Message):
         ).encode('utf-8')
         output.write(line)
 
-    filename = f"premium_users_{datetime.datetime('now').strftime('%Y%m%d')}.txt"
+    filename = f"premium_users_{datetime.now().strftime('%Y%m%d')}.txt"
     document = BufferedInputFile(output.getvalue(), filename=filename)
     await message.reply_document(document=document)
 

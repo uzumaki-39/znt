@@ -12,7 +12,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.storage.memory import MemoryStorage
-from database import get_user, create_user, get_user_credits, update_credits, set_first_name, DB_CONFIG
+from database import get_user, create_user, get_user_credits, update_credits, set_first_name, get_db_connection, DB_CONFIG
 from live_emoji import _ALIASES as _PLAN_ALIASES, _LOOKUP as _PLAN_LOOKUP
 import privacy
 import gifs
@@ -78,7 +78,7 @@ BOT_TOKEN = "8924543407:AAG735Se0rtdcNCprkngZN-8sViTGmjy4uk"
 
 START_IMAGE_URL     = "https://ibb.co/nM7VhBZy"
 
-LOG_CHANNEL_ID      = -1004337097449
+LOG_CHANNEL_ID      = 5359329585   # ← your working log channel
 BOT_LINK            = "https://t.me/+XSF5plL6ZxI2NDcx"
 REQUIRED_CHANNEL_ID = -1004337097449
 REQUIRED_GROUP_ID   = -1004337097449
@@ -378,7 +378,7 @@ def _status_sync(user_id):
             if (
                 row['is_premium'] == 1
                 and row['premium_expiry']
-                and datetime.datetime('now') < row['premium_expiry']
+                and datetime.now() < row['premium_expiry']
             ):
                 cur.execute(
                     "SELECT plan FROM receipts WHERE user_id = ? ORDER BY purchased_on DESC LIMIT 1",
