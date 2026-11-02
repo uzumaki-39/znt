@@ -74,7 +74,7 @@ from split import (
 )
 
 
-BOT_TOKEN = "8924543407:AAG735Se0rtdcNCprkngZN-8sViTGmjy4uk"
+BOT_TOKEN = "8924543407:AAEjYiRepBbB2Yx8obSLoRZC3kzhpD1bxw4"
 
 START_IMAGE_URL     = "https://ibb.co/nM7VhBZy"
 
