@@ -11,7 +11,7 @@ from database import (
 import gifs
 
 
-ADMINS = {7963961151, 8880615460}
+ADMINS = {8801932812, 8801932812}
 
 router = Router()
 

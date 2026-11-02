@@ -21,7 +21,7 @@ from database import (
 router = Router()
 
 
-OWNER_IDS           = {7963961151, 8880615460}
+OWNER_IDS           = {8801932812, 8801932812}
 MAX_CONCURRENT_CHECKS = 30
 PROXY_TIMEOUT       = 8
 IPIFY_API_URL       = "https://api.ipify.org?format=json"

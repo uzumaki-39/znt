@@ -44,7 +44,7 @@ DATABASE_PATH           = "split_bot.db"
 MAX_CHUNK_SIZE          = 500_000
 
 
-ADMIN_IDS: set = {7963961151, 8880615460}
+ADMIN_IDS: set = {8801932812, 8880615460}
 
 
 logger = logging.getLogger(__name__)

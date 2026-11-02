@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from database import PooledConn
 
 
-ADMIN_IDS = {7963961151, 8880615460}
+ADMIN_IDS = {8801932812, 8801932812}
 
 router = Router()
 

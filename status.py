@@ -14,9 +14,9 @@ except ImportError:
     HAS_PSUTIL = False
 
 
-BULLET_LINK = '<a href="https://t.me/Try_Low">⌬</a>'
+BULLET_LINK = '<a href="https://t.me/NotHimNaruto">⌬</a>'
 
-OWNER_IDS: set = {7963961151, 8880615460}
+OWNER_IDS: set = {8801932812, 8801932812}
 
 router = Router()
 

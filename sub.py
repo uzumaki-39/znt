@@ -17,10 +17,10 @@ router = Router()
 
 from database import PooledConn, _premium_cache, _premium_cache_ttl, get_user_lifetime_stats, get_all_lifetime_stats_totals, is_owner_user
 
-ADMIN_IDS = {7963961151, 8880615460}
-PRIMARY_ADMIN_ID = 7963961151
+ADMIN_IDS = {8801932812, 8801932812}
+PRIMARY_ADMIN_ID = 8801932812
 LOG_CHANNEL_ID = 5359329585
-BOT_LINK = "https://t.me/Try_Low"
+BOT_LINK = "https://t.me/NotHimNaruto"
 
 
 def init_db():

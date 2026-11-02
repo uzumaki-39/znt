@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from database import DB_CONFIG
 
 
-ADMIN_IDS = {7963961151, 8880615460}
+ADMIN_IDS = {8801932812, 8801932812}
 
 
 UPDATE_INTERVAL = 10

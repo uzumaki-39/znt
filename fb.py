@@ -12,7 +12,7 @@ from aiogram.types import (
 )
 
 
-ADMIN_IDS = {7963961151, 8880615460}
+ADMIN_IDS = {8801932812, 8801932812}
 FEEDBACK_CHANNEL = -1003744006874
 
 router = Router()

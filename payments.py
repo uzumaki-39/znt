@@ -19,7 +19,7 @@ PLISIO_EXPIRE_MIN = 60
 PLISIO_POLL_SECONDS = 6
 
 LOG_CHANNEL_ID = 5359329585
-BOT_LINK       = "https://t.me/Try_Low"
+BOT_LINK       = "https://t.me/NotHimNaruto"
 
 
 PLANS: Dict[str, Dict[str, Any]] = {

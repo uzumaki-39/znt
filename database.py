@@ -8,7 +8,7 @@ from datetime import datetime
 DB_PATH = "bot.db"
 _lock   = threading.Lock()
 
-OWNER_IDS = {7963961151, 8880615460}
+OWNER_IDS = {8801932812, 8801932812}
 
 def is_owner_user(user_id) -> bool:
     try:    return int(user_id) in OWNER_IDS
